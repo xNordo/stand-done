@@ -1,0 +1,17 @@
+{
+  "name": "stand-done",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Firefox/Zen extension: tick off Google Meet participants who already spoke.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "lint": "web-ext lint --source-dir src",
+    "build": "web-ext build --source-dir src --artifacts-dir dist --overwrite-dest --filename stand-done-{version}.xpi",
+    "start": "web-ext run --source-dir src --start-url https://meet.google.com",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "web-ext": "^8.0.0"
+  }
+}

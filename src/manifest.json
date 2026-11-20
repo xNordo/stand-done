@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Stand Done",
+  "version": "0.1.0",
+  "description": "Check off Google Meet participants who have already spoken during a standup.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "stand-done@kuba.local",
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
