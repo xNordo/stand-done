@@ -2,7 +2,7 @@
 A firefox extension for Google Meet that lets you check off participants who have already spoken during daily standups.
 
 Adds a tick toggle to every participant in the Meet **People panel** and on **video tiles**.
-Both stay in sync. Ticks are kept in memory only — reloading the page or leaving the call clears them.
+Both stay in sync. Ticks are kept in memory only — reloading the page clears them (leaving and rejoining without a reload keeps them).
 
 ## Development
 

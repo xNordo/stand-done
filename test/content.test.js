@@ -7,8 +7,14 @@ const { JSDOM } = require('jsdom');
 
 const script = fs.readFileSync(path.join(__dirname, '../src/content.js'), 'utf8');
 
+function load(html) {
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true });
+  dom.window.eval(script);
+  return dom.window;
+}
+
 function setup() {
-  const dom = new JSDOM(`<body>
+  return load(`<body>
     <div id="tiles">
       <div data-participant-id="p/1" id="tile1"><div data-participant-id="p/1"></div><span class="notranslate">Ala</span></div>
       <div data-participant-id="p/2" id="tile2"><span class="notranslate">Bob</span></div>
@@ -19,11 +25,9 @@ function setup() {
       <div role="listitem" data-participant-id="p/1" aria-label="Ala" id="row1"><div id="av1"><img></div><span>Ala</span></div>
       <div role="listitem" data-participant-id="p/2" aria-label="Bob" id="row2"><div><img></div><span>Bob</span></div>
       <div role="listitem" data-participant-id="p/9" aria-label="Kuba" id="rowMe"><div><img></div><div><span>Kuba</span><span>(Ty)</span></div></div>
-      <div role="listitem" data-participant-id="p/8" aria-label="Kuba" id="rowMe2"><div><img></div><div><span>Kuba</span><span>(You)</span></div></div>
+      <div role="listitem" data-participant-id="p/8" aria-label="Kuba" id="rowGuest"><div><img></div><div><span>Kuba</span><span>(Guest)</span></div></div>
       <div role="listitem" data-participant-id="p/3" aria-label="Cezary (PM)" id="row3"><div><img></div><div><span>Cezary (PM)</span></div></div>
-    </div></body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
-  dom.window.eval(script);
-  return dom.window;
+    </div></body>`);
 }
 
 const tick = (w, id) => w.document.querySelector(`#${id} .stand-done-tick`);
@@ -31,7 +35,7 @@ const frame = (w) => new Promise((r) => w.requestAnimationFrame(() => r()));
 
 test('decorates outermost host only, once per element', () => {
   const w = setup();
-  assert.strictEqual(w.document.querySelectorAll('.stand-done-tick').length, 6);
+  assert.strictEqual(w.document.querySelectorAll('.stand-done-tick').length, 7);
   assert.strictEqual(tick(w, 'row1').nextElementSibling, w.document.getElementById('av1'), 'panel tick sits left of avatar');
   assert.ok(w.document.querySelector('#rowMe .stand-done-spacer'), 'own row keeps alignment spacer');
   assert.ok(tick(w, 'row1').classList.contains('stand-done-panel'));
@@ -73,8 +77,8 @@ test('own participant detected language-independently and excluded by id', () =>
   // tile with self-view controls -> its id (p/9) is excluded on tile and panel row
   assert.strictEqual(tick(w, 'tileMe'), null);
   assert.strictEqual(tick(w, 'rowMe'), null);
-  // panel-only fallback: "<span>name</span><span>(...)</span>" structure
-  assert.strictEqual(tick(w, 'rowMe2'), null);
+  // once a tile confirms self, other "(...)"-suffixed rows (e.g. guests) keep their tick
+  assert.ok(tick(w, 'rowGuest'));
   // names with parentheses are not mistaken for self
   assert.ok(tick(w, 'row3'));
   assert.ok(tick(w, 'tile3'));
@@ -135,4 +139,46 @@ test('self-view controls rendered later still exclude own tile', async () => {
   await frame(w);
   assert.strictEqual(tick(w, 'tile3'), null);
   assert.strictEqual(tick(w, 'row3'), null);
+});
+
+// Panel-only DOM: own tile hidden, so self is guessed from the "(...)" suffix row.
+const panelRow = (id, name, suffix) => `<div role="listitem" data-participant-id="p/${id}" aria-label="${name}" id="r${id}">` +
+  `<div><img></div><div><span>${name}</span>${suffix ? `<span>${suffix}</span>` : ''}</div></div>`;
+
+test('panel guess hides a single suffixed row, without clearing its tick', () => {
+  const w = load(`<body><div role="list">${panelRow(1, 'Ala')}${panelRow(9, 'Kuba', '(You)')}</div></body>`);
+  assert.ok(tick(w, 'r1'));
+  assert.strictEqual(tick(w, 'r9'), null);
+  assert.ok(w.document.querySelector('#r9 .stand-done-spacer'));
+});
+
+test('panel guess is ignored when several rows match', () => {
+  const w = load(`<body><div role="list">${panelRow(9, 'Kuba', '(You)')}${panelRow(5, 'Ala', '(Guest)')}</div></body>`);
+  assert.ok(tick(w, 'r9'));
+  assert.ok(tick(w, 'r5'));
+});
+
+test('tile confirmation drops a wrong panel guess and restores its tick', async () => {
+  const w = load(`<body><div id="tiles"></div><div role="list">${panelRow(5, 'Ala', '(Guest)')}${panelRow(9, 'Kuba')}</div></body>`);
+  assert.strictEqual(tick(w, 'r5'), null, 'guest wrongly guessed as self');
+  const me = w.document.createElement('div');
+  me.setAttribute('data-participant-id', 'p/9');
+  me.innerHTML = '<div jslog="188492;"></div>';
+  w.document.getElementById('tiles').append(me);
+  await frame(w);
+  await frame(w);
+  await frame(w);
+  assert.ok(tick(w, 'r5'));
+  assert.strictEqual(w.document.querySelector('#r5 .stand-done-spacer'), null);
+  assert.strictEqual(tick(w, 'r9'), null);
+});
+
+test('Enter/Space on a tick stay away from Meet, other keys pass through', () => {
+  const w = setup();
+  const seen = [];
+  w.document.getElementById('tile2').addEventListener('keydown', (e) => seen.push(e.key));
+  for (const key of [' ', 'Enter', 'a']) {
+    tick(w, 'tile2').dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true }));
+  }
+  assert.deepStrictEqual(seen, ['a']);
 });

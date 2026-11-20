@@ -1,9 +1,10 @@
 // Stand Done — adds tick toggles to Google Meet participants (People panel + video tiles).
-// State lives in memory only: it is lost on page reload / leaving the call.
+// State lives in memory only: it is lost on page reload.
 (() => {
   'use strict';
 
   const ATTR = 'data-participant-id';
+  const HOST_SELECTOR = `[${ATTR}]`;
   const BTN_CLASS = 'stand-done-tick';
   const DONE_CLASS = 'stand-done-checked';
   const HOST_CLASS = 'stand-done-host';
@@ -14,17 +15,19 @@
 
   /** @type {Set<string>} participant ids marked as done */
   const done = new Set();
-  /** Own participant ids (tiles and panel rows share the id). */
+  /** Own participant ids confirmed by a tile's self-view controls (tiles and panel rows share the id). */
   const selfIds = new Set();
+  /** Own id guessed from the panel; used only while no tile confirms self. */
+  let guessedSelfId = null;
 
   // Panel list items and video tiles both carry data-participant-id in Meet.
   // Only the outermost element per id is decorated (Meet nests the attribute).
   function findHosts(root) {
     const hosts = [];
-    root.querySelectorAll(`[${ATTR}]`).forEach((el) => {
+    root.querySelectorAll(HOST_SELECTOR).forEach((el) => {
       const id = el.getAttribute(ATTR);
       if (!id) return;
-      const parent = el.parentElement && el.parentElement.closest(`[${ATTR}]`);
+      const parent = el.parentElement && el.parentElement.closest(HOST_SELECTOR);
       if (parent && parent.getAttribute(ATTR) === id) return;
       hosts.push(el);
     });
@@ -52,6 +55,7 @@
 
   // Panel fallback (when your tile is hidden): Meet renders your row's name as
   // <span>Name</span><span>(You)</span> — detected structurally, not by the word.
+  // Other rows might share the structure (e.g. a "(Guest)" tag), so this is only a guess.
   function panelRowHasSelfSuffix(el) {
     const label = cleanName(el.getAttribute('aria-label'));
     if (!label) return false;
@@ -62,14 +66,24 @@
     });
   }
 
-  function learnSelf(el) {
-    if (selfIds.has(el.getAttribute(ATTR))) return;
-    const self = isPanelItem(el) ? panelRowHasSelfSuffix(el) : !!el.querySelector(SELF_TILE_MARKER);
-    if (self) selfIds.add(el.getAttribute(ATTR));
+  function learnSelf(hosts) {
+    hosts.forEach((el) => {
+      const id = el.getAttribute(ATTR);
+      if (!selfIds.has(id) && !isPanelItem(el) && el.querySelector(SELF_TILE_MARKER)) selfIds.add(id);
+    });
+    // A tile confirmation wins; the panel guess is trusted only when exactly one row matches.
+    if (selfIds.size) {
+      guessedSelfId = null;
+      return;
+    }
+    const guesses = new Set(hosts.filter((el) => isPanelItem(el) && panelRowHasSelfSuffix(el))
+      .map((el) => el.getAttribute(ATTR)));
+    guessedSelfId = guesses.size === 1 ? [...guesses][0] : null;
   }
 
   function isSelf(el) {
-    return selfIds.has(el.getAttribute(ATTR));
+    const id = el.getAttribute(ATTR);
+    return selfIds.has(id) || id === guessedSelfId;
   }
 
   function buttonOf(el) {
@@ -125,7 +139,6 @@
 
   function stop(e) {
     // Keep Meet from reacting (pinning tiles, opening menus, etc.).
-    e.stopPropagation();
     e.stopImmediatePropagation();
   }
 
@@ -135,18 +148,12 @@
     el.classList.remove(HOST_CLASS, DONE_CLASS);
   }
 
-  // Where the panel checkbox goes: in the row's flex line, left of the avatar.
-  function panelSlot(el) {
+  // Panel checkbox goes in the row's flex line, left of the avatar.
+  function insertPanelNode(el, node) {
     const avatar = el.querySelector('img');
     const box = avatar && avatar.parentElement;
-    return box && box.parentElement && box !== el
-      ? { parent: box.parentElement, before: box }
-      : { parent: el, before: el.firstChild };
-  }
-
-  function insertPanelNode(el, node) {
-    const { parent, before } = panelSlot(el);
-    parent.insertBefore(node, before);
+    if (box && box.parentElement && box !== el) box.parentElement.insertBefore(node, box);
+    else el.insertBefore(node, el.firstChild);
   }
 
   function createButton(el, panel) {
@@ -169,7 +176,8 @@
 
   function decorate(el) {
     if (isSelf(el)) {
-      done.delete(el.getAttribute(ATTR));
+      // Clear the tick only for confirmed self; a wrong panel guess must not lose it.
+      if (selfIds.has(el.getAttribute(ATTR))) done.delete(el.getAttribute(ATTR));
       undecorate(el);
       // Keep own row aligned with the others in the panel.
       if (isPanelItem(el) && !el.querySelector(`.${SPACER_CLASS}`)) {
@@ -180,6 +188,9 @@
       }
       return;
     }
+    // Row was guessed as own before (guess dropped) — remove its spacer.
+    const spacer = el.querySelector(`.${SPACER_CLASS}`);
+    if (spacer) spacer.remove();
     if (!buttonOf(el)) {
       const panel = isPanelItem(el);
       const btn = createButton(el, panel);
@@ -195,11 +206,9 @@
   function scan() {
     scheduled = false;
     const hosts = findHosts(document);
-    hosts.forEach(learnSelf);
+    learnSelf(hosts);
     hosts.forEach(decorate);
   }
-
-  const HOST_SELECTOR = `[${ATTR}]`;
 
   function isOwnNode(node) {
     return node instanceof Element &&
