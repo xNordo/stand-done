@@ -79,3 +79,60 @@ test('own participant detected language-independently and excluded by id', () =>
   assert.ok(tick(w, 'row3'));
   assert.ok(tick(w, 'tile3'));
 });
+
+// Full scans query the whole document; count them via document.querySelectorAll.
+function countScans(w) {
+  const orig = w.document.querySelectorAll.bind(w.document);
+  const counter = { n: 0 };
+  w.document.querySelectorAll = (sel) => {
+    if (sel === '[data-participant-id]') counter.n++;
+    return orig(sel);
+  };
+  return counter;
+}
+
+test('mutations outside participants do not trigger a rescan', async () => {
+  const w = setup();
+  const scans = countScans(w);
+  const captions = w.document.createElement('div');
+  captions.textContent = 'caption line';
+  w.document.body.append(captions);
+  captions.append(w.document.createElement('span'));
+  await frame(w);
+  await frame(w);
+  assert.strictEqual(scans.n, 0);
+});
+
+test('own decoration does not cause a follow-up rescan', async () => {
+  const w = setup();
+  const scans = countScans(w);
+  const t = w.document.createElement('div');
+  t.id = 'tile4';
+  t.setAttribute('data-participant-id', 'p/4');
+  w.document.getElementById('tiles').append(t);
+  await frame(w);
+  await frame(w);
+  await frame(w);
+  assert.ok(tick(w, 'tile4'));
+  assert.strictEqual(scans.n, 1, 'one scan for the new tile, none for our inserted button');
+});
+
+test('button removed by Meet re-render is re-added', async () => {
+  const w = setup();
+  tick(w, 'tile2').remove();
+  await frame(w);
+  await frame(w);
+  assert.ok(tick(w, 'tile2'));
+});
+
+test('self-view controls rendered later still exclude own tile', async () => {
+  const w = setup();
+  assert.ok(tick(w, 'tile3'));
+  const ctl = w.document.createElement('div');
+  ctl.setAttribute('jslog', '177243;');
+  w.document.getElementById('tile3').append(ctl);
+  await frame(w);
+  await frame(w);
+  assert.strictEqual(tick(w, 'tile3'), null);
+  assert.strictEqual(tick(w, 'row3'), null);
+});
